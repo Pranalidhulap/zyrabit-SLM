@@ -2,6 +2,7 @@ import re
 import sqlite3
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from app.infrastructure.shared.config import DOCS_DIR
 
@@ -88,11 +89,9 @@ class SQLiteMCPClient:
                 "Only .db, .sqlite, and .sqlite3 files are allowed."
             )
 
-        if not path.exists() or not path.is_file():
-            raise FileNotFoundError(
-                f"SQLite database not found: {db_path}"
-            )
-
+        # Check workspace confinement BEFORE checking whether
+        # the file exists. This prevents information disclosure
+        # about paths outside the allowed workspace.
         try:
             path.relative_to(self.workspace_root)
         except ValueError:
@@ -100,20 +99,33 @@ class SQLiteMCPClient:
                 "SQLite database must be inside the configured workspace."
             )
 
+        if not path.exists() or not path.is_file():
+            raise FileNotFoundError(
+                f"SQLite database not found: {db_path}"
+            )
+
         return path
-     
-    
+
     @staticmethod
     def _connect_read_only(db_path: Path) -> sqlite3.Connection:
         """Open SQLite database in read-only mode."""
 
-        uri = f"file:{db_path.as_posix()}?mode=ro"
+        # Encode URI-special characters such as '#', '?', and '%'
+        # so they cannot alter the SQLite URI semantics.
+        encoded_path = quote(db_path.as_posix(), safe="/:")
 
-        return sqlite3.connect(
+        uri = f"file:{encoded_path}?mode=ro"
+
+        connection = sqlite3.connect(
             uri,
             uri=True,
             timeout=5,
         )
+
+        # Additional SQLite-level protection against writes.
+        connection.execute("PRAGMA query_only = ON")
+
+        return connection
 
     def get_schema(self, db_path: str) -> list[dict[str, Any]]:
         """Return tables and their column schemas."""

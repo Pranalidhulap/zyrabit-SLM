@@ -110,3 +110,32 @@ def test_sqlite_query_rejects_non_sqlite_extension(client, tmp_path):
             str(bad_path),
             "SELECT * FROM test",
         )
+
+
+def test_sqlite_connection_is_read_only_for_uri_special_characters(
+    client,
+    tmp_path,
+):
+    db_path = tmp_path / "data#1.db"
+
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute(
+            "CREATE TABLE students (id INTEGER PRIMARY KEY, name TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO students (name) VALUES ('Alice')"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    read_only_connection = client._connect_read_only(db_path)
+
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            read_only_connection.execute(
+                "UPDATE students SET name = 'Hacked'"
+            )
+    finally:
+        read_only_connection.close()
